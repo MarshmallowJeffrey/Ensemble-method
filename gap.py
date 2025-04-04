@@ -100,9 +100,18 @@ def gap_solver(m, n, eps, X_distri, lambda2s):
     else:
         print("No solution found or optimization was not successful.")
 
+# Function to generate a nested LaTeX table given a list of values.
+def create_nested_table(lambda2s, values):
+    lines = ["\\begin{tabular}{cc}", "  \\hline", "  $\\lambda_2$ & Value \\\\", "  \\hline"]
+    for lam, v in zip(lambda2s, values):
+        lines.append(f"  {lam:.3f} & {v} \\\\")
+    lines.append("  \\hline")
+    lines.append("\\end{tabular}")
+    return "\n".join(lines)
+
 #table_generator: Generates a table in latex displaying statistics (model running time, duality gap, alpha sparsity)
 #   for different data dimensions
-def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri):
+def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2s):
     with open(file_name, "w") as f:
         f.write("\\begin{table}[htbp]\n")
         f.write("\\centering\n")
@@ -114,21 +123,34 @@ def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri):
             #(Data dimension, Number of samples)
         for n in range(n_start, n_end):
             for m in range(m_start, m_end):
-                lambda2s = (1, 1)
-                timeSum = 0
-                duality_gapSum = 0
-                alpha_sparsitySum = 0
-                    #Iterate for 100 times
-                for k in range(3):
-                    time, duality_gap, alpha_sparsity = gap_solver(m, n, eps, X_distri, lambda2s)
-                    timeSum += time
-                    duality_gapSum += duality_gap
-                    alpha_sparsitySum += alpha_sparsity
-                time = timeSum / 3
-                duality_gap = duality_gapSum / 3
-                alpha_sparsity = alpha_sparsitySum / 3
-                    # Format the numbers as needed (here using 3 decimal places for floats)
-                f.write(f"{n} & {m} & {time:.3f} & {duality_gap:.4f} & {alpha_sparsity} \\\\\n")
+                time_values = []
+                gap_values = []
+                sparsity_values = []
+                f_lambda2s = []
+                for (f_lambda2, g_lambda2) in lambda2s:
+                    timeSum = 0
+                    duality_gapSum = 0
+                    alpha_sparsitySum = 0
+                    #Iterate for 3 times
+                    for k in range(3):
+                        time, duality_gap, alpha_sparsity = gap_solver(m, n, eps, X_distri, (f_lambda2, g_lambda2))
+                        timeSum += time
+                        duality_gapSum += duality_gap
+                        alpha_sparsitySum += alpha_sparsity
+                    time = timeSum / 3
+                    duality_gap = duality_gapSum / 3
+                    alpha_sparsity = alpha_sparsitySum / 3
+                    time_values.append(f"{time:.3f}")
+                    gap_values.append(f"{duality_gap:.3f}")
+                    sparsity_values.append(f"{alpha_sparsity:.3f}")
+                    f_lambda2s.append(f_lambda2)
+                #Create nested tables
+                nested_time = create_nested_table(f_lambda2s, time_values)
+                nested_gap = create_nested_table(f_lambda2s, gap_values)
+                nested_sparsity = create_nested_table(f_lambda2s, sparsity_values)
+
+                # Format the nested tables as needed (here using 3 decimal places for floats)
+                f.write(f"    {n} & {m} & {nested_time} & {nested_gap} & {nested_sparsity} \\\\\n")
                 print('finished:',(n,m))
 
         f.write("\\hline\n")
@@ -143,17 +165,8 @@ def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri):
 eps = 10 ** (-5)
 #table_generator("alpha_table_random.tex", 5, 10, 5, 8, 'normal')
 #table_generator("alpha_table_FOGD.tex", 20, 30, 10, 15, 'first_order_GD')
+lambda2s = []
+for i in np.arange(1, 1.4, 0.1):
+    lambda2s.append((i, 2-i))
+table_generator("alpha_table_approximateGD.tex", 7, 10, 5, 8, 'first_order_GD', lambda2s)
 
-#lamb_discretization: computes the average duality gap for different grid point lambda_2
-def lamb_discretization(m, n, lambda2s, eps):
-    for f_lambda2 in lambda2s:
-        g_lambda2 = 2 - f_lambda2
-        gap = 0
-        for k in range(3):
-            (time, duality_gap, alpha_sparsity) = gap_solver(m, n, eps, 'first_order_GD', (f_lambda2, g_lambda2))
-            gap += duality_gap
-        gap /= 3
-        print(gap)
-
-    #This test says the further away from the current point, the larger the duality gap
-lamb_discretization(20, 6, np.arange(1, 1.9, 0.1), eps)

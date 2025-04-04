@@ -101,10 +101,18 @@ def gap_solver(m, n, eps, X_distri, lambda2s):
         print("No solution found or optimization was not successful.")
 
 # Function to generate a nested LaTeX table given a list of values.
-def create_nested_table(lambda2s, values):
-    lines = ["\\begin{tabular}{cc}", "  \\hline", "  $\\lambda_2$ & Value \\\\", "  \\hline"]
-    for lam, v in zip(lambda2s, values):
-        lines.append(f"  {lam:.3f} & {v} \\\\")
+# Function to create an inner LaTeX table for a given (n, m) pair.
+# The inner table has columns for the lambda tuple and its corresponding metrics.
+def create_inner_table(lambda_tuples, times, gaps, sparsities):
+    lines = [
+        "\\begin{tabular}{cccc}",
+        "  \\hline",
+        "   $(\lambda_2, 2-\lambda_2)$  & Time & Duality Gap & Alpha Sparsity \\\\",
+        "  \\hline"
+    ]
+    for lam, t, gap, sparsity in zip(lambda_tuples, times, gaps, sparsities):
+        lam_str = f"({lam[0]:.3f}, {lam[1]:.3f})"
+        lines.append(f"  {lam_str} & {t:.3f} & {gap:.3f} & {sparsity:.3f} \\\\")
     lines.append("  \\hline")
     lines.append("\\end{tabular}")
     return "\n".join(lines)
@@ -114,11 +122,12 @@ def create_nested_table(lambda2s, values):
 def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2s):
     with open(file_name, "w") as f:
         f.write("\\begin{table}[htbp]\n")
-        f.write("\\centering\n")
-        f.write("\\begin{tabular}{ccccc}\n")
-        f.write("\\hline\n")
-        f.write("$n$ & $m$ & Time & Duality\\_gap & Alpha\\_sparsity \\\\\n")
-        f.write("\\hline\n")
+        f.write("  \\centering\n")
+        # Outer table has three columns: n, m, and the nested metrics table.
+        f.write("  \\begin{tabular}{ccc}\n")
+        f.write("    \\hline\n")
+        f.write("    $n$ & $m$ & Metrics \\\\\n")
+        f.write("    \\hline\n")
 
             #(Data dimension, Number of samples)
         for n in range(n_start, n_end):
@@ -126,7 +135,7 @@ def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2
                 time_values = []
                 gap_values = []
                 sparsity_values = []
-                f_lambda2s = []
+                #f_lambda2s = []
                 for (f_lambda2, g_lambda2) in lambda2s:
                     timeSum = 0
                     duality_gapSum = 0
@@ -140,17 +149,16 @@ def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2
                     time = timeSum / 3
                     duality_gap = duality_gapSum / 3
                     alpha_sparsity = alpha_sparsitySum / 3
-                    time_values.append(f"{time:.3f}")
-                    gap_values.append(f"{duality_gap:.3f}")
-                    sparsity_values.append(f"{alpha_sparsity:.3f}")
-                    f_lambda2s.append(f_lambda2)
-                #Create nested tables
-                nested_time = create_nested_table(f_lambda2s, time_values)
-                nested_gap = create_nested_table(f_lambda2s, gap_values)
-                nested_sparsity = create_nested_table(f_lambda2s, sparsity_values)
+                        #Append each value
+                    time_values.append(time)
+                    gap_values.append(duality_gap)
+                    sparsity_values.append(alpha_sparsity)
+                    #f_lambda2s.append(())
 
-                # Format the nested tables as needed (here using 3 decimal places for floats)
-                f.write(f"    {n} & {m} & {nested_time} & {nested_gap} & {nested_sparsity} \\\\\n")
+                    # Create the nested inner table.
+                inner_table = create_inner_table(lambda2s, time_values, gap_values, sparsity_values)
+                f.write(f"    {n} & {m} & {inner_table} \\\\\n")
+
                 print('finished:',(n,m))
 
         f.write("\\hline\n")
@@ -163,8 +171,11 @@ def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2
 
     #Generate statistics
 eps = 10 ** (-5)
-#table_generator("alpha_table_random.tex", 5, 10, 5, 8, 'normal')
-#table_generator("alpha_table_FOGD.tex", 20, 30, 10, 15, 'first_order_GD')
+#lambda2s = []
+#for i in range(3):
+#    lambda2s.append((1, 2-1))
+#table_generator("alpha_table_random.tex", 5, 10, 5, 8, 'normal', lambda2s)
+#table_generator("alpha_table_FOGD.tex", 20, 30, 10, 15, 'first_order_GD', lambda2s)
 lambda2s = []
 for i in np.arange(1, 1.4, 0.1):
     lambda2s.append((i, 2-i))

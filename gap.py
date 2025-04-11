@@ -1,7 +1,7 @@
 import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
-#np.random.seed(12)
+np.random.seed(12)
 
 #Data_generator: generates data needed for the duality gap optimization problem
     #Inputs:
@@ -20,31 +20,84 @@ from gurobipy import GRB
         #f: L_f smooth and mu-strongly convex function
         #g: L_g smooth and mu-strongly convex function
 def Data_generator(m, n, X_distri, F_form, lambda1s):
+    f_lambda1 = lambda1s[0]; g_lambda1 = lambda1s[1]
         # Form of objective function
     if F_form == "quadratic":
         c = np.random.randn(n)
         A = np.random.randn(n, n)
+            #Counter example for sparsity = 1
+        #for k in range(100):
+        #    A += np.random.randn(n, n)
+        #A /= 100
         Q = A.T @ A
         f = Q; g = np.identity(n)
-        f_lambda1 = lambda1s[0]; g_lambda1 = lambda1s[1]
         GradF_lambda1 = f_lambda1 * f + g_lambda1 * g
         eigs = np.linalg.eigvals(GradF_lambda1)
-        L = np.max(eigs)
+        L = np.max(eigs); mu = np.min(eigs)
+            # Data matrix
+        X_opt = - np.linalg.inv(GradF_lambda1) @ (f_lambda1 * c)  # Optimal x vector
+        # print('X_opt:', X_opt)
+            # Sampling with mean the optimal solution
+        X = np.random.randn(m, n) + X_opt
+            #Stopping criterion
+        GradFx_lambda1 = GradF_lambda1 @ X[0, :] + (f_lambda1 * c)
+    elif F_form == "logistic":
+            #Form of objective function
+        p = 10
+        y = np.random.choice([-1, 1], size=p, replace=True)
+        Z = np.random.normal(loc=y[:, None], scale=1, size=(len(y), n))
+        mu = g_lambda1; sigma_max = np.linalg.norm(Z, ord=2); L = f_lambda1 * (sigma_max**2) / (4*len(y)) + g_lambda1
+            #Data matrix(no closed-form optimal solution)
+        X = np.random.randn(m, n)
+            # Stopping criterion
+        sigmoid_sum = 0
+        for i in range(p):
+            sigmoid_sum += - (1 - 1/(1+np.exp(-y[i]*Z[i].T @ X[0,:])))*y[i]*Z[i]
+        GradFx_lambda1 = sigmoid_sum / p + X[0,:]
 
-        # Data matrix
-    X = np.random.randn(m, n)
-    if X_distri == 'first_order_GD':
-        X_opt = - np.linalg.inv(GradF_lambda1) @ (f_lambda1 * c) #Optimal x vector
-        X_cur = X[0,:]
-        t = 1
-        while np.linalg.norm(X_cur - X_opt) > eps and t < m:
-            GradF_cur = GradF_lambda1 @ X_cur + (f_lambda1 * c)
-            X_cur = X_cur - GradF_cur / L
-            X[t, :] = X_cur
-            t += 1
+        # Initializations
+    X_cur = X[0, :]
+    t = 1
+    W_cur = X_cur
+    tau = np.sqrt(mu / L)
+    stop_cri = np.linalg.norm(GradFx_lambda1) > eps
+        # Apply first-order algorithms: GD and AGD, to solve it
+    while stop_cri and t < m:
+        if X_distri == 'first_order_GD':
+            if F_form == "quadratic":
+                GradFx_lambda1 = GradF_lambda1 @ X_cur + (f_lambda1 * c)
+            elif F_form == "logistic":
+                sigmoid_sum = 0
+                for i in range(p):
+                    sigmoid_sum += - (1 - 1 / (1 + np.exp(-y[i] * Z[i].T @ X_cur))) * y[i] * Z[i]
+                GradFx_lambda1 = sigmoid_sum / p + X_cur
+            X_cur = X_cur - GradFx_lambda1 / L
+        elif X_distri == 'AGD':
+                # Mixing sequence Y_t
+            Y_cur = 1 / (1 + tau) * X_cur + tau / (1 + tau) * W_cur
+                # Dual sequence W_t
+            if F_form == "quadratic":
+                GradFx_lambda1 = GradF_lambda1 @ Y_cur + (f_lambda1 * c)
+            elif F_form == "logistic":
+                sigmoid_sum = 0
+                for i in range(p):
+                    sigmoid_sum += - (1 - 1 / (1 + np.exp(-y[i] * Z[i].T @ Y_cur))) * y[i] * Z[i]
+                GradFx_lambda1 = sigmoid_sum / p + Y_cur
+            W_cur = (1 - tau) * W_cur + tau * (Y_cur - GradFx_lambda1 / mu)
+                # Primal sequence X_t
+            X_cur = Y_cur - GradFx_lambda1 / L
+        else:
+            break
+        X[t, :] = X_cur
+        t += 1
+        stop_cri = np.linalg.norm(GradFx_lambda1) > eps
+
     #print('X:', X)
     d = np.linalg.norm(X, axis=1) ** 2 # Data vector: d[i] = ||x_i||^2
-    return (X, d, c, f, g)
+    if F_form == "quadratic":
+        return (X, d, c, f, g)
+    elif F_form == "logistic":
+        return (X, d, y, Z)
 
 #gap: computes the duality gap U_F - L_F
     #Inputs:
@@ -73,15 +126,29 @@ def gap(alpha, GradF, d, L, mu, X):
         #Gurobi running time
         #duality gap
         #sparsity of alpha
-def gap_solver(m, n, eps, X_distri, lambda2s):
-        # Generate data
-    (X, d, c, f, g) = Data_generator(m, n, X_distri=X_distri, F_form='quadratic', lambda1s=(1, 1))
-    #print(X)
+def gap_solver(m, n, eps, X_distri, F_form, lambda2s):
     f_lambda2 = lambda2s[0]; g_lambda2 = lambda2s[1]
-    GradF = X @ (f_lambda2 * f.T + g_lambda2 * g.T) + (f_lambda2 * c)
-    eigs = np.linalg.eigvals(f_lambda2 * f + g_lambda2 * g)
-    L = np.max(eigs); mu = np.min(eigs)
-    #print(L,mu)
+        # Generate data
+    if F_form == 'quadratic':
+        (X, d, c, f, g) = Data_generator(m, n, X_distri=X_distri, F_form=F_form, lambda1s=(1, 1))
+        GradF = X @ (f_lambda2 * f.T + g_lambda2 * g.T) + (f_lambda2 * c)
+        eigs = np.linalg.eigvals(f_lambda2 * f + g_lambda2 * g); L = np.max(eigs); mu = np.min(eigs)
+    elif F_form == 'logistic':
+        (X, d, y, Z) = Data_generator(m, n, X_distri=X_distri, F_form=F_form, lambda1s=(1, 1))
+        GradF = np.zeros([m, m])
+        GradFMat = np.zeros([m, n])
+        for i in range(m):
+            sigmoidX_i_sum = 0
+            for k in range(len(y)):
+                sigmoidX_i_sum += - (1 - 1 / (1 + np.exp(-y[k] * Z[k].T @ X[i, :]))) * y[k] * Z[k]
+            GradFMat[i] = f_lambda2 * sigmoidX_i_sum + g_lambda2 * X[i, :]
+
+             #Update GradF(i,j)
+        for i in range(m):
+            for j in range(m):
+                GradF[i,j] = GradFMat[i].T @ GradFMat[j]
+        mu = g_lambda2; sigma_max = np.linalg.norm(Z, ord=2); L = f_lambda2 * (sigma_max ** 2) / (4 * len(y)) + g_lambda2
+    #print(X)
 
         # Solve QP on the unit simplex
     model = gp.Model("QPoverSimplex")
@@ -103,30 +170,40 @@ def gap_solver(m, n, eps, X_distri, lambda2s):
 # Function to generate a nested LaTeX table given a list of values.
 # Function to create an inner LaTeX table for a given (n, m) pair.
 # The inner table has columns for the lambda tuple and its corresponding metrics.
-def create_inner_table(lambda_tuples, times, gaps, sparsities):
-    lines = [
-        "\\begin{tabular}{cccc}",
-        "  \\hline",
-        "   $(\lambda_2, 2-\lambda_2)$  & Time & Duality Gap & Alpha Sparsity \\\\",
-        "  \\hline"
-    ]
-    for lam, t, gap, sparsity in zip(lambda_tuples, times, gaps, sparsities):
-        lam_str = f"({lam[0]:.3f}, {lam[1]:.3f})"
-        lines.append(f"  {lam_str} & {t:.3f} & {gap:.3f} & {sparsity:.3f} \\\\")
-    lines.append("  \\hline")
-    lines.append("\\end{tabular}")
+def create_inner_table(lambda_tuples, times, gaps, sparsities, param):
+    if param:
+        lines = [
+            "\\begin{tabular}{cccc}",
+            "  \\hline",
+            "   $(\lambda_2, 2-\lambda_2)$  & Time & Duality Gap & Alpha Sparsity \\\\",
+            "  \\hline"
+        ]
+        for lam, t, gap, sparsity in zip(lambda_tuples, times, gaps, sparsities):
+            lam_str = f"({lam[0]:.3f}, {lam[1]:.3f})"
+            lines.append(f"  {lam_str} & {t:.3f} & {gap:.3f} & {sparsity:.3f} \\\\")
+        lines.append("  \\hline")
+        lines.append("\\end{tabular}")
+    else:
+        lines = []
+        lam_str = f"({lambda_tuples[0][0]:.3f}, {lambda_tuples[0][1]:.3f})"
+        lines.append(f"  {lam_str} & {times:.3f} & {gaps:.3f} & {sparsities:.3f} \\\\")
     return "\n".join(lines)
 
 #table_generator: Generates a table in latex displaying statistics (model running time, duality gap, alpha sparsity)
 #   for different data dimensions
-def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2s):
+def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, F_form, lambda2s, param):
     with open(file_name, "w") as f:
         f.write("\\begin{table}[htbp]\n")
         f.write("  \\centering\n")
         # Outer table has three columns: n, m, and the nested metrics table.
-        f.write("  \\begin{tabular}{ccc}\n")
-        f.write("    \\hline\n")
-        f.write("    $n$ & $m$ & Metrics \\\\\n")
+        if param:
+            f.write("  \\begin{tabular}{ccc}\n")
+            f.write("    \\hline\n")
+            f.write("    $n$ & $m$ & Metrics \\\\\n")
+        else:
+            f.write("  \\begin{tabular}{cccccc}\n")
+            f.write("    \\hline\n")
+            f.write("    $n$ & $m$ & $(\lambda_2, 2-\lambda_2)$ & Time & Duality Gap & Alpha sparsity \\\\\n")
         f.write("    \\hline\n")
 
             #(Data dimension, Number of samples)
@@ -135,28 +212,43 @@ def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2
                 time_values = []
                 gap_values = []
                 sparsity_values = []
-                #f_lambda2s = []
-                for (f_lambda2, g_lambda2) in lambda2s:
+                    #No parametrization
+                if not param:
                     timeSum = 0
                     duality_gapSum = 0
                     alpha_sparsitySum = 0
-                    #Iterate for 3 times
                     for k in range(3):
-                        time, duality_gap, alpha_sparsity = gap_solver(m, n, eps, X_distri, (f_lambda2, g_lambda2))
+                        time, duality_gap, alpha_sparsity = gap_solver(m, n, eps, X_distri, F_form, (lambda2s[0][0], lambda2s[0][1]))
                         timeSum += time
                         duality_gapSum += duality_gap
                         alpha_sparsitySum += alpha_sparsity
                     time = timeSum / 3
                     duality_gap = duality_gapSum / 3
                     alpha_sparsity = alpha_sparsitySum / 3
-                        #Append each value
-                    time_values.append(time)
-                    gap_values.append(duality_gap)
-                    sparsity_values.append(alpha_sparsity)
-                    #f_lambda2s.append(())
+                        # Create the nested inner table.
+                    inner_table = create_inner_table(lambda2s, time, duality_gap, alpha_sparsity, False)
 
-                    # Create the nested inner table.
-                inner_table = create_inner_table(lambda2s, time_values, gap_values, sparsity_values)
+                    #Parametrization
+                else:
+                    for (f_lambda2, g_lambda2) in lambda2s:
+                        timeSum = 0
+                        duality_gapSum = 0
+                        alpha_sparsitySum = 0
+                        #Iterate for 3 times
+                        for k in range(3):
+                            time, duality_gap, alpha_sparsity = gap_solver(m, n, eps, X_distri, F_form,(f_lambda2, g_lambda2))
+                            timeSum += time
+                            duality_gapSum += duality_gap
+                            alpha_sparsitySum += alpha_sparsity
+                        time = timeSum / 3
+                        duality_gap = duality_gapSum / 3
+                        alpha_sparsity = alpha_sparsitySum / 3
+                            #Append each value
+                        time_values.append(time)
+                        gap_values.append(duality_gap)
+                        sparsity_values.append(alpha_sparsity)
+                        # Create the nested inner table.
+                    inner_table = create_inner_table(lambda2s, time_values, gap_values, sparsity_values, True)
                 f.write(f"    {n} & {m} & {inner_table} \\\\\n")
 
                 print('finished:',(n,m))
@@ -171,13 +263,19 @@ def table_generator(file_name, m_start, m_end, n_start, n_end, X_distri, lambda2
 
     #Generate statistics
 eps = 10 ** (-5)
-#lambda2s = []
-#for i in range(3):
-#    lambda2s.append((1, 2-1))
-#table_generator("alpha_table_random.tex", 5, 10, 5, 8, 'normal', lambda2s)
-#table_generator("alpha_table_FOGD.tex", 20, 30, 10, 15, 'first_order_GD', lambda2s)
+        #random + first-order-GD
 lambda2s = []
-for i in np.arange(1, 1.4, 0.1):
-    lambda2s.append((i, 2-i))
-table_generator("alpha_table_approximateGD.tex", 7, 10, 5, 8, 'first_order_GD', lambda2s)
+for i in range(3):
+    lambda2s.append((1, 2-1))
+#table_generator("alpha_table_random.tex", 5, 10, 5, 6, 'normal', 'logistic', lambda2s, False)
+table_generator("alpha_table_FOGD.tex", 10, 13, 5, 10, 'first_order_GD', 'logistic', lambda2s, False)
+#table_generator("alpha_table_AGD.tex", 10, 13, 5, 10, 'AGD', 'quadratic', lambda2s, False)
+
+        #Parametrization optimization
+#lambda2s = []
+#for i in np.arange(1, 1.4, 0.1):
+#   lambda2s.append((i, 2-i))
+#table_generator("alpha_table_approximateAGD.tex", 7, 10, 5, 8, 'AGD', 'quadratic', lambda2s, True)
+
+#time, duality_gap, alpha_sparsity = gap_solver(10, 10, eps, 'first_order_GD', (1, 1))
 

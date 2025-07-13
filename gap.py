@@ -32,8 +32,7 @@ def Data_generator(m, n, X_distri, F_form, lambda1s):
         Q = A.T @ A
         f = Q; g = np.identity(n)
         GradF_lambda1 = f_lambda1 * f + g_lambda1 * g
-        eigs = np.linalg.eigvals(GradF_lambda1)
-        L = np.max(eigs); mu = np.min(eigs)
+        eigs = np.linalg.eigvals(GradF_lambda1); L = np.max(eigs); mu = np.min(eigs)
             # Data matrix
         X_opt = - np.linalg.inv(GradF_lambda1) @ (f_lambda1 * c)  # Optimal x vector
         # print('X_opt:', X_opt)
@@ -47,6 +46,7 @@ def Data_generator(m, n, X_distri, F_form, lambda1s):
         y = np.random.choice([-1, 1], size=p, replace=True)
         Z = np.random.normal(loc=y[:, None], scale=1, size=(len(y), n))
         mu = g_lambda1; sigma_max = np.linalg.norm(Z, ord=2); L = f_lambda1 * (sigma_max**2) / (4*len(y)) + g_lambda1
+        #print('(mu,L)', mu, L)
             #Data matrix(no closed-form optimal solution)
         X = np.random.randn(m, n)
             # Stopping criterion
@@ -111,6 +111,8 @@ def Data_generator(m, n, X_distri, F_form, lambda1s):
 def gap(alpha, GradF, d, L, mu, X):
         # Gradient matrix: H = G/(mu**2)-M
     H = GradF @ GradF.T / (mu ** 2) - X @ X.T
+    if not np.all(np.linalg.eigvals(H)>=0):
+        print('Found one indefinite H')
     return (L-mu)/2 * (alpha.T @ d + alpha.T @ H @ alpha)
 
 #gap_solver: Use Gurobi to solve the gap optimization problem, i.e: Minimize the gap on the unit simplex
@@ -147,6 +149,7 @@ def gap_solver(m, n, eps, X_distri, F_form, lambda2s):
         for i in range(m):
             for j in range(m):
                 GradF[i,j] = GradFMat[i].T @ GradFMat[j]
+        print(GradF)
         mu = g_lambda2; sigma_max = np.linalg.norm(Z, ord=2); L = f_lambda2 * (sigma_max ** 2) / (4 * len(y)) + g_lambda2
     #print(X)
 
@@ -268,7 +271,7 @@ lambda2s = []
 for i in range(3):
     lambda2s.append((1, 2-1))
 #table_generator("alpha_table_random.tex", 5, 10, 5, 6, 'normal', 'logistic', lambda2s, False)
-table_generator("alpha_table_FOGD.tex", 10, 13, 5, 10, 'first_order_GD', 'logistic', lambda2s, False)
+table_generator("alpha_table_FOGD_test.tex", 3, 5, 5, 10, 'first_order_GD', 'logistic', lambda2s, False)
 #table_generator("alpha_table_AGD.tex", 10, 13, 5, 10, 'AGD', 'quadratic', lambda2s, False)
 
         #Parametrization optimization
